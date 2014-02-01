@@ -262,4 +262,11 @@ type-correct, so loading will fail."
   (interactive)
   (insert "_|_"))
 
+(defun idris-refine-metavar ()
+  "Select an identifier to refine a metavariable"
+  (interactive)
+  (let ((thing (car (idris-thing-at-point))))
+    (let ((result (idris-eval `(:compatible-identifiers ,thing))))
+      (popup-menu* result :isearch 't))))
+
 (provide 'idris-commands)
