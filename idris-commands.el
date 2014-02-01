@@ -265,8 +265,15 @@ type-correct, so loading will fail."
 (defun idris-refine-metavar ()
   "Select an identifier to refine a metavariable"
   (interactive)
-  (let ((thing (car (idris-thing-at-point))))
-    (let ((result (idris-eval `(:compatible-identifiers ,thing))))
-      (popup-menu* result :isearch 't))))
+  (idris-load-file-sync)
+  (let* ((thing (car (idris-thing-at-point)))
+         (result (idris-eval `(:compatible-identifiers ,thing)))
+         (selected (substring-no-properties (popup-menu* result :isearch 't)))
+         (newexpr (idris-eval `(:make-refined-expression ,thing ,selected))))
+    (beginning-of-line)
+    (if (search-forward (concat "?" thing) nil t)
+        (replace-match newexpr t t)
+        (error "metavariable %s seems to have vanished." thing))
+    (idris-load-file-sync)))
 
 (provide 'idris-commands)
