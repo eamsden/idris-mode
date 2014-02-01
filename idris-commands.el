@@ -31,6 +31,7 @@
 (require 'idris-info)
 (require 'idris-log)
 (require 'idris-warnings-tree)
+(require 'popup)
 
 (defvar-local idris-buffer-dirty-p t
   "An Idris buffer is dirty if there have been modifications since it was last loaded")
