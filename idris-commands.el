@@ -291,4 +291,24 @@ type-correct, so loading will fail."
         (error "metavariable %s seems to have vanished." thing))
     (idris-load-file-sync)))
 
+(defun idris-refine-metavar-recursive ()
+  "Select an identifier to refine a metavariable"
+  (interactive)
+  (idris-load-file-sync)
+  (defun idris-refine-metavar-recursive-step (thing response)
+    (if (eq (car response) :identifier-list)
+      (let* ((selected (substring-no-properties (popup-menu* (cadr response))))
+             (newresponse (idris-eval `(:choose-identifier ,selected))))
+        (idris-refine-metavar-recursive-step thing newresponse))
+      (progn
+        (beginning-of-line)
+        (if (search-forward (concat "?" thing) nil t)
+            (replace-match (cadr response) t t)
+            (error "metavariable %s seems to have vanished." thing))
+        (idris-load-file-sync))))
+
+  (let* ((thing (car (idris-thing-at-point)))
+         (result (idris-eval `(:compatible-identifiers-recursive ,thing))))
+    (idris-refine-metavar-recursive-step thing result)))
+
 (provide 'idris-commands)

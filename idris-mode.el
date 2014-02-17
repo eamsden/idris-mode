@@ -78,6 +78,7 @@
     (define-key map (kbd "C-c C-a") 'idris-proof-search)
     (define-key map (kbd "C-c C-r") 'idris-refine-metavar)
     (define-key map (kbd "C-c C-s") 'idris-refine-metavar-complete)
+    (define-key map (kbd "C-c C-u") 'idris-refine-metavar-recursive)
     (define-key map (kbd "C-c _") 'idris-insert-bottom)
     map)
   "Keymap used in Idris mode.")
