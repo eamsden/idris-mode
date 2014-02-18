@@ -36,26 +36,30 @@
   "Show the compiler notes in tree view."
   (interactive)
   (with-temp-message "Preparing compiler note tree..."
-    (let ((notes idris-raw-warnings)
+    (let ((notes (reverse idris-raw-warnings))
           (buffer (get-buffer-create idris-notes-buffer-name)))
       (with-current-buffer buffer
         (idris-compiler-notes-mode)
         (setq buffer-read-only nil)
         (erase-buffer)
         (if (null notes)
-            (insert "[no notes]")
+            (progn
+              (message "Cannot find any defect!")
+              (kill-buffer)
+              nil)
           (let ((root (idris-compiler-notes-to-tree notes)))
             (idris-tree-insert root "")
-            (insert "\n"))
-          (message "Press q to close, return or mouse on error navigate to source"))
-        (setq buffer-read-only t)
-        (goto-char (point-min))
-        notes))))
+            (insert "\n")
+            (message "Press q to close, return or mouse on error navigate to source")
+            (setq buffer-read-only t)
+            (goto-char (point-min))
+            notes))))))
 
 (defvar idris-tree-printer 'idris-tree-default-printer)
 
 (defun idris-tree-for-note (note)
   (make-idris-tree :item (nth 3 note)
+                   :highlighting (if (> (length note) 4) (nth 4 note) '())
                    :plist (list 'note note)
                    :print-fn idris-tree-printer))
 
@@ -107,8 +111,7 @@ Invokes `idris-compiler-notes-mode-hook'.")
            (idris-show-source-location (nth 0 note) (nth 1 note) (nth 2 note))))))
 
 (defun idris-show-source-location (filename lineno col)
-  (save-selected-window   ; show the location, but don't hijack focus.
-    (idris-goto-source-location filename lineno col)))
+  (idris-goto-source-location filename lineno col))
 
 (defun idris-goto-location (filename)
   "Opens buffer for filename"
@@ -133,21 +136,20 @@ Invokes `idris-compiler-notes-mode-hook'.")
   "Like with-slots but works only for structs.
 \(fn (CONC-NAME &rest SLOTS) STRUCT &body BODY)"
   (declare (indent 2))
-  (cl-flet ((reader (slot) (intern (concat (symbol-name conc-name)
-					(symbol-name slot)))))
-    (let ((struct-var (cl-gensym "struct")))
-      `(let ((,struct-var ,struct))
-	 (symbol-macrolet
-	     ,(mapcar (lambda (slot)
-			(etypecase slot
-			  (symbol `(,slot (,(reader slot) ,struct-var)))
-			  (cons `(,(first slot) (,(reader (second slot))
-						 ,struct-var)))))
-		      slots)
-	   . ,body)))))
+  (let ((struct-var (cl-gensym "struct")))
+    `(let ((,struct-var ,struct))
+       (symbol-macrolet
+           ,(mapcar (lambda (slot)
+                      (etypecase slot
+                        (symbol `(,slot (,(intern (concat (symbol-name conc-name) (symbol-name slot))) ,struct-var)))
+                        (cons `(,(first slot) (,(intern (concat (symbol-name conc-name) (symbol-name (second slot))))
+                                               ,struct-var)))))
+                    slots)
+         . ,body))))
 
 (cl-defstruct (idris-tree (:conc-name idris-tree.))
   item
+  highlighting
   (print-fn #'idris-tree-default-printer :type function)
   (kids '() :type list)
   (collapsed-p nil :type boolean)
@@ -160,7 +162,8 @@ Invokes `idris-compiler-notes-mode-hook'.")
   (not (idris-tree.kids tree)))
 
 (defun idris-tree-default-printer (tree)
-  (princ (idris-tree.item tree) (current-buffer)))
+  (idris-propertize-spans (idris-repl-semantic-text-props (idris-tree.highlighting tree))
+    (insert (idris-tree.item tree))))
 
 (defun idris-tree-decoration (tree)
   (cond ((idris-tree-leaf-p tree) "-- ")
@@ -199,7 +202,11 @@ This is used for labels spanning multiple lines."
       (idris-tree-insert-decoration tree)
       (funcall print-fn tree)
       (idris-tree-indent-item start-mark (point) (concat prefix "   "))
-      (add-text-properties line-start (point) (list 'idris-tree tree))
+      (add-text-properties line-start (point)
+        `(idris-tree ,tree
+          mouse-face highlight
+          help-echo ,(concat "<mouse-2> "
+                             (if kids (if collapsed-p "expand" "collapse") "go to source"))))
       (set-marker-insertion-type start-mark t)
       (when (and kids (not collapsed-p))
         (terpri (current-buffer))

@@ -24,6 +24,7 @@
 ;; Boston, MA 02111-1307, USA.
 
 (require 'idris-core)
+(require 'idris-settings)
 (require 'inferior-idris)
 (require 'idris-repl)
 (require 'idris-warnings)
@@ -32,6 +33,7 @@
 (require 'idris-log)
 (require 'idris-warnings-tree)
 (require 'popup)
+(require 'cl-lib)
 
 (defvar-local idris-buffer-dirty-p t
   "An Idris buffer is dirty if there have been modifications since it was last loaded")
@@ -65,9 +67,9 @@
     (idris-eval `(:interpret ,(concat ":cd " new-working-directory)))
     (setq idris-process-current-working-directory new-working-directory)))
 
-(defun idris-load-file (notpop)
+(defun idris-load-file ()
   "Pass the current buffer's file to the inferior Idris process."
-  (interactive "P")
+  (interactive)
   (save-buffer)
   (idris-ensure-process-and-repl-buffer)
   (if (buffer-file-name)
@@ -77,12 +79,12 @@
           (idris-switch-working-directory (file-name-directory fn))
           (setq idris-currently-loaded-buffer nil)
           (idris-eval-async `(:load-file ,(file-name-nondirectory fn))
-                          (apply-partially (lambda (notpop result)
-                                             (idris-make-clean)
-                                             (setq idris-currently-loaded-buffer (current-buffer))
-                                             (unless notpop
-                                               (pop-to-buffer (idris-repl-buffer)))
-                                             (message result)) notpop)
+                          (lambda (result)
+                            (idris-make-clean)
+                            (setq idris-currently-loaded-buffer (current-buffer))
+                            (when (member 'warnings-tree idris-warnings-printing)
+                              (idris-list-compiler-notes))
+                            (message result))
                           (lambda (_condition)
                             (when (member 'warnings-tree idris-warnings-printing)
                               (idris-list-compiler-notes)
@@ -108,10 +110,7 @@
           (idris-switch-working-directory (file-name-directory fn))
           (setq idris-currently-loaded-buffer nil)
           (idris-eval `(:load-file ,(file-name-nondirectory fn)))
-          (setq idris-currently-loaded-buffer (current-buffer))
-          (when (member 'warnings-tree idris-warnings-printing)
-            (when (idris-list-compiler-notes)
-              (pop-to-buffer (idris-buffer-name :notes)))))
+          (setq idris-currently-loaded-buffer (current-buffer)))
         (idris-make-clean))
     (error "Cannot find file for current buffer")))
 
@@ -139,7 +138,10 @@
                 (car (idris-thing-at-point)))))
     (when name
       (if thing (idris-ensure-process-and-repl-buffer) (idris-load-file-sync))
-      (idris-show-info (format "%s" (idris-eval `(:type-of ,name)))))))
+      (let* ((ty (idris-eval `(:type-of ,name)))
+             (result (car ty))
+             (formatting (cdr ty)))
+      (idris-show-info (format "%s" result) formatting)))))
 
 (defun idris-case-split ()
   "Case split the pattern variable at point"
@@ -147,7 +149,7 @@
   (let ((what (idris-thing-at-point)))
     (when (car what)
       (idris-load-file-sync)
-      (let ((result (idris-eval `(:case-split ,(cdr what) ,(car what)))))
+      (let ((result (car (idris-eval `(:case-split ,(cdr what) ,(car what))))))
         (delete-region (line-beginning-position) (line-end-position))
         (idris-insert-or-expand (substring result 0 (1- (length result))))))))
 
@@ -158,7 +160,7 @@
         (command (if proof :add-proof-clause :add-clause)))
     (when (car what)
       (idris-load-file-sync)
-      (let ((result (idris-eval `(,command ,(cdr what) ,(car what)))))
+      (let ((result (car (idris-eval `(,command ,(cdr what) ,(car what))))))
         (end-of-line)
         (insert "\n")
         (idris-insert-or-expand result)))))
@@ -169,7 +171,7 @@
   (let ((what (idris-thing-at-point)))
     (when (car what)
       (idris-load-file-sync)
-      (let ((result (idris-eval `(:add-missing ,(cdr what) ,(car what)))))
+      (let ((result (car (idris-eval `(:add-missing ,(cdr what) ,(car what))))))
         (forward-line 1)
         (idris-insert-or-expand result)))))
 
@@ -179,7 +181,7 @@
   (let ((what (idris-thing-at-point)))
     (when (car what)
       (idris-load-file-sync)
-      (let ((result (idris-eval `(:make-with ,(cdr what) ,(car what)))))
+      (let ((result (car (idris-eval `(:make-with ,(cdr what) ,(car what))))))
         (beginning-of-line)
         (kill-line)
         (idris-insert-or-expand result)))))
@@ -194,9 +196,9 @@
 
 (defun idris-metavar-to-snippet (str)
   "Replace metavariables with yasnippet snippets"
-  (lexical-let ((n 0))
+  (let ((n 0))
     (cl-flet ((to-snippet-param (metavar)
-                 (incf n)
+                 (cl-incf n)
                  (if (string= metavar "(_)")
                      (format "(${%s:_})" n)
                    (format "${%s:%s}" n metavar))))
@@ -211,7 +213,7 @@
         (what (idris-thing-at-point)))
     (when (car what)
       (idris-load-file-sync)
-      (let ((result (idris-eval `(:proof-search ,(cdr what) ,(car what) ,hints))))
+      (let ((result (car (idris-eval `(:proof-search ,(cdr what) ,(car what) ,hints)))))
         (save-excursion
           (let ((start (progn (search-backward "?") (point)))
                 (end (progn (forward-char) (search-forward-regexp "[^a-zA-Z0-9_']") (backward-char) (point))))
@@ -250,10 +252,10 @@ already loaded, as a buffer awaiting completion is probably not
 type-correct, so loading will fail."
   (if (not idris-process)
       nil
-    (destructuring-bind (identifier start end) (idris-identifier-backwards-from-point)
+    (cl-destructuring-bind (identifier start end) (idris-identifier-backwards-from-point)
       (when identifier
-        (let ((result (idris-eval `(:repl-completions ,identifier))))
-          (destructuring-bind (completions _partial) result
+        (let ((result (car (idris-eval `(:repl-completions ,identifier)))))
+          (cl-destructuring-bind (completions _partial) result
             (if (null completions)
                 nil
               (list start end completions))))))))
@@ -310,5 +312,23 @@ type-correct, so loading will fail."
   (let* ((thing (car (idris-thing-at-point)))
          (result (idris-eval `(:compatible-identifiers-recursive ,thing))))
     (idris-refine-metavar-recursive-step thing result)))
+
+(defun idris-kill-buffers ()
+  (idris-warning-reset-all)
+  (setq idris-currently-loaded-buffer nil)
+  ; not killing :events since it it tremendously useful for debuging
+  (let ((bufs (list :repl :proof-obligations :proof-shell :proof-script :log :info :notes)))
+    (dolist (b bufs) (idris-kill-buffer b))))
+
+(defun idris-quit ()
+  (interactive)
+  (let* ((pbufname (idris-buffer-name :process))
+         (pbuf (get-buffer pbufname)))
+    (if pbuf
+        (progn
+          (kill-buffer pbuf)
+          (unless (get-buffer pbufname) (idris-kill-buffers))
+          (setq idris-rex-continuations '()))
+      (idris-kill-buffers))))
 
 (provide 'idris-commands)

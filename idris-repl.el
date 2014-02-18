@@ -1,6 +1,6 @@
 ;;; idris-repl.el --- Run an Idris interpreter using S-Expression communication protocol
 
-;; Copyright (C) 2013 Hannes Mehnert
+;; Copyright (C) 2013 Hannes Mehnert and David Raymond Christiansen
 
 ;; Author: Hannes Mehnert <hannes@mehnert.org>
 
@@ -24,48 +24,11 @@
 ;; Boston, MA 02111-1307, USA.
 
 (require 'idris-core)
+(require 'idris-settings)
 (require 'inferior-idris)
 (require 'idris-common-utils)
 (require 'idris-completion)
 (require 'cl-lib)
-
-(defgroup idris-repl nil "Idris REPL" :prefix 'idris :group 'idris)
-
-(defface idris-repl-prompt-face
-  '((t (:inherit font-lock-keyword-face)))
-  "Face for the prompt in the Idris REPL."
-  :group 'idris-repl)
-
-(defface idris-repl-output-face
-  '((t (:inherit font-lock-string-face)))
-  "Face for Idris output in the Idris REPL."
-  :group 'idris-repl)
-
-(defface idris-repl-input-face
-  '((t (:bold t)))
-  "Face for previous input in the Idris REPL."
-  :group 'idris-repl)
-
-(defface idris-repl-result-face
-  '((t ()))
-  "Face for the result of an evaluation in the Idris REPL."
-  :group 'idris-repl)
-
-(defcustom idris-repl-history-file "~/.idris/idris-history.eld"
-  "File to save the persistent REPL history to."
-  :type 'string
-  :group 'idris-repl)
-
-(defcustom idris-repl-history-size 200
-  "*Maximum number of lines for persistent REPL history."
-  :type 'integer
-  :group 'idris-repl)
-
-(defcustom idris-repl-history-file-coding-system
-  'utf-8-unix
-  "*The coding system for the history file."
-  :type 'symbol
-  :group 'idris-repl)
 
 (defvar idris-prompt-string "Idris"
   "The prompt for the user")
@@ -129,10 +92,12 @@
   "Return or create the Idris REPL buffer."
   (or (get-buffer idris-repl-buffer-name)
       (let ((buffer (get-buffer-create idris-repl-buffer-name)))
-        (with-current-buffer buffer
-          (idris-repl-mode)
-          (idris-repl-buffer-init))
-        buffer)))
+        (save-selected-window
+          (with-current-buffer buffer
+            (idris-repl-mode)
+            (idris-repl-buffer-init))
+          (pop-to-buffer buffer t)
+          buffer))))
 
 (defun idris-switch-to-output-buffer ()
   "Select the output buffer and scroll to bottom."
@@ -180,7 +145,8 @@ Invokes `idris-repl-mode-hook'."
     (idris-repl-safe-load-history)
     (add-hook 'kill-buffer-hook
               'idris-repl-safe-save-history nil t))
-  (add-hook 'kill-emacs-hook 'idris-repl-save-all-histories))
+  (add-hook 'kill-emacs-hook 'idris-repl-save-all-histories)
+  (setq mode-name `("Idris-REPL" (:eval (if idris-rex-continuations "!" "")))))
 
 (defun idris-repl-remove-event-hook-function ()
   (setq idris-prompt-string "Idris")
@@ -235,7 +201,7 @@ Invokes `idris-repl-mode-hook'."
   (interactive)
   (let* ((input (idris-repl-current-input))
          (result (idris-eval `(:repl-completions ,input))))
-    (destructuring-bind (completions partial) result
+    (destructuring-bind (completions partial) (car result)
       (cond ((null completions)
              (idris-minibuffer-respecting-message "Can't find completions for \"%s\"" input)
              (ding)
@@ -281,16 +247,19 @@ Invokes `idris-repl-mode-hook'."
       ((list ':interpret string))
     ((:ok result &optional spans)
      (idris-repl-insert-result result spans))
-    ((:error condition)
-     (idris-repl-show-abort condition))))
+    ((:error condition &optional spans)
+     (idris-repl-show-abort condition spans))))
 
-(defun idris-repl-show-abort (condition)
+(defun idris-repl-show-abort (condition &optional highlighting)
   (with-current-buffer (idris-repl-buffer)
     (save-excursion
       (idris-save-marker idris-output-start
         (idris-save-marker idris-output-end
           (goto-char idris-output-end)
-          (insert-before-markers (format "Error: %s.\n" condition))
+          (insert-before-markers "Error: ")
+          (idris-propertize-spans (idris-repl-semantic-text-props highlighting)
+            (insert-before-markers condition))
+          (insert-before-markers "\n")
           (idris-repl-insert-prompt))))
     (idris-repl-show-maximum-output)))
 
@@ -308,26 +277,6 @@ Invokes `idris-repl-mode-hook'."
             (insert-before-markers "\n")
             (set-marker idris-output-end (1- (point)))))))
     (idris-repl-show-maximum-output)))
-
-(defun idris-repl-semantic-text-props (highlighting)
-  (cl-flet ((get-props (props)
-              (let* ((name (assoc :name props))
-                     (implicit (assoc :implicit props))
-                     (decor (assoc :decor props))
-                     (implicit-face (if (and implicit (equal (cadr implicit) :True))
-                                        '(idris-semantic-implicit-face)
-                                      nil))
-                     (decor-face (if decor
-                                     (cdr (assoc (cadr decor)
-                                                 '((:type idris-semantic-type-face)
-                                                   (:data idris-semantic-data-face)
-                                                   (:function idris-semantic-function-face)
-                                                   (:bound idris-semantic-bound-face))))
-                                          nil)))
-                (list 'help-echo (if name (cadr name) "")
-                      'face (append implicit-face decor-face)))))
-    (cl-loop for (start length meta) in highlighting
-             collecting (list start length (get-props meta)))))
 
 (defun idris-repl-insert-result (string &optional highlighting)
   "Inserts STRING and marks it as evaluation result"
