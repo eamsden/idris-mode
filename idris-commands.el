@@ -299,7 +299,7 @@ type-correct, so loading will fail."
   (idris-load-file-sync)
   (defun idris-refine-metavar-recursive-step (thing response)
     (if (eq (car response) :identifier-list)
-      (let* ((selected (substring-no-properties (popup-menu* (cadr response))))
+      (let* ((selected (substring-no-properties (popup-menu* (cadr response) :isearch 't)))
              (newresponse (car (idris-eval `(:choose-identifier ,selected)))))
         (idris-refine-metavar-recursive-step thing newresponse))
       (progn
