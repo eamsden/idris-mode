@@ -56,8 +56,8 @@
 
 (defun idris-pprint-event (event buffer)
   "Pretty print EVENT in BUFFER."
-  (let ((print-length 20)
-        (print-level 6)
+  (let ((print-length 1000000)
+        (print-level 1000000)
         (pp-escape-newlines t))
     (pp event buffer)))
 
